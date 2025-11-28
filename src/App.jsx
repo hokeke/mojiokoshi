@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Mic, Square, FileText, Wand2, Scissors, Copy, Trash2, Check, AlertCircle, Sparkles, ChevronDown, Settings, X } from 'lucide-react';
+import { Mic, Square, FileText, Wand2, Scissors, Copy, Trash2, Check, AlertCircle, Sparkles, ChevronDown, Settings, X, Smartphone } from 'lucide-react';
 
 export default function App() {
   const [isRecording, setIsRecording] = useState(false);
@@ -17,6 +17,7 @@ export default function App() {
   // API Key管理用のステート
   const [apiKey, setApiKey] = useState('');
   const [showSettings, setShowSettings] = useState(false);
+  const [isIOS, setIsIOS] = useState(false);
 
   const recognitionRef = useRef(null);
   const isRecordingRef = useRef(false);
@@ -28,10 +29,20 @@ export default function App() {
   const sourceRef = useRef(null);
   const animationFrameRef = useRef(null);
 
-  // 初期化時にローカルストレージからAPIキーを読み込む
+  // モバイル判定（簡易）
+  const isMobile = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
+  // 初期化時にローカルストレージからAPIキーを読み込む & iOS判定
   useEffect(() => {
     const savedKey = localStorage.getItem('gemini_api_key');
     if (savedKey) setApiKey(savedKey);
+
+    // iOS判定
+    const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+    setIsIOS(ios);
+    if (ios) {
+      setErrorMsg('iPhone/iPad (iOS) のブラウザは音声認識に対応していない場合があります。PCまたはAndroid Chromeの利用を推奨します。');
+    }
   }, []);
 
   // APIキーを保存する関数
@@ -42,15 +53,19 @@ export default function App() {
     setApiKey(key);
     localStorage.setItem('gemini_api_key', key);
     setShowSettings(false);
-    setErrorMsg('');
+    setErrorMsg(''); // 保存時にエラーもクリア
   };
 
   useEffect(() => {
     isRecordingRef.current = isRecording;
   }, [isRecording]);
 
-  // --- Visualizer & Recognition Logic (省略なしで維持) ---
+  // --- Visualizer ---
+  // スマホでのマイク競合を防ぐため、PCのみで動作させる等の制御を行う
   const startVisualizer = async () => {
+    // モバイルの場合はビジュアライザーを起動しない（マイク権限の競合回避）
+    if (isMobile) return;
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
@@ -75,6 +90,7 @@ export default function App() {
       updateVisualizer();
     } catch (err) {
       console.warn("Visualizer init failed:", err);
+      // ビジュアライザーの失敗は致命的ではないのでユーザーへのエラー表示はしない
     }
   };
 
@@ -82,9 +98,11 @@ export default function App() {
     if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
     if (sourceRef.current) {
       if (sourceRef.current.mediaStream) sourceRef.current.mediaStream.getTracks().forEach(t => t.stop());
-      sourceRef.current.disconnect();
+      try { sourceRef.current.disconnect(); } catch (e) { }
     }
-    if (audioContextRef.current) audioContextRef.current.close();
+    if (audioContextRef.current) {
+      try { audioContextRef.current.close(); } catch (e) { }
+    }
     audioContextRef.current = null;
     analyserRef.current = null;
     sourceRef.current = null;
@@ -129,12 +147,18 @@ export default function App() {
     };
 
     recognition.onerror = (event) => {
+      console.error("Recognition Error:", event.error);
       if (event.error === 'not-allowed') {
         setErrorMsg('マイクの使用が許可されていません。');
         setIsRecording(false);
         stopVisualizer();
       } else if (event.error === 'network') {
-        setErrorMsg('ネットワークが不安定です。再接続中...');
+        // スマホなどのスリープ復帰時などによく出る
+        setErrorMsg('ネットワーク接続を確認中...');
+      } else if (event.error === 'service-not-allowed') {
+        setErrorMsg('この端末では音声認識サービスが利用できません。');
+        setIsRecording(false);
+        stopVisualizer();
       }
     };
 
@@ -145,7 +169,7 @@ export default function App() {
         if (retryCountRef.current >= 5) {
           setIsRecording(false);
           stopVisualizer();
-          setErrorMsg('接続エラーが続いたため停止しました。');
+          setErrorMsg('接続が頻繁に切断されるため停止しました。');
           retryCountRef.current = 0;
           return;
         }
@@ -160,14 +184,17 @@ export default function App() {
     try {
       recognition.start();
       recognitionRef.current = recognition;
-      setErrorMsg('');
-      startVisualizer();
+      setErrorMsg(''); // 成功したらエラー消去
+      // スマホでなければビジュアライザー起動
+      if (!isMobile) {
+        startVisualizer();
+      }
     } catch (e) {
       setErrorMsg('音声認識を開始できませんでした。');
       setIsRecording(false);
       stopVisualizer();
     }
-  }, []);
+  }, [isMobile]);
 
   const toggleRecording = () => {
     if (isRecording) {
@@ -201,7 +228,7 @@ export default function App() {
     }
   };
 
-  // Gemini API呼び出し関数（修正版：StateのapiKeyを使用）
+  // Gemini API呼び出し関数
   const callGemini = async (promptText) => {
     if (!apiKey) {
       setShowSettings(true);
@@ -368,6 +395,18 @@ export default function App() {
       )}
 
       <main className="max-w-5xl mx-auto px-4 py-6 md:py-8 space-y-6">
+
+        {/* iOS Warning */}
+        {isIOS && (
+          <div className="bg-amber-50 text-amber-700 p-4 rounded-lg flex items-start gap-3 border border-amber-100 mb-4">
+            <Smartphone size={20} className="shrink-0 mt-0.5" />
+            <div className="text-sm">
+              <p className="font-bold mb-1">iOS（iPhone/iPad）をご利用の方へ</p>
+              <p>iOSのブラウザ制限により、音声認識が動作しない可能性があります。動作しない場合は、PC (Chrome) または Android端末をご利用ください。</p>
+            </div>
+          </div>
+        )}
+
         {errorMsg && (
           <div className="bg-red-50 text-red-600 p-4 rounded-lg flex items-center gap-3 border border-red-100">
             <AlertCircle size={20} className="shrink-0" />
@@ -385,7 +424,7 @@ export default function App() {
                   : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-200 hover:shadow-indigo-300'
                 }`}
             >
-              {isRecording && (
+              {isRecording && !isMobile && (
                 <div className="absolute bottom-0 left-0 right-0 bg-red-100 transition-all duration-75 ease-out opacity-30 pointer-events-none"
                   style={{ height: `${Math.max(0, audioLevel)}%` }}
                 />
@@ -396,11 +435,13 @@ export default function App() {
             </button>
             {isRecording && (
               <div className="flex items-center gap-2 px-2 h-10 rounded-lg bg-slate-50 border border-slate-100">
-                <div className="flex items-end gap-1 h-4 w-6 justify-center">
-                  <div className="w-1 bg-red-400 rounded-full transition-all duration-75" style={{ height: `${Math.max(20, audioLevel * 0.5)}%` }}></div>
-                  <div className="w-1 bg-red-500 rounded-full transition-all duration-75" style={{ height: `${Math.max(30, audioLevel * 0.8)}%` }}></div>
-                  <div className="w-1 bg-red-400 rounded-full transition-all duration-75" style={{ height: `${Math.max(20, audioLevel * 0.6)}%` }}></div>
-                </div>
+                {!isMobile && (
+                  <div className="flex items-end gap-1 h-4 w-6 justify-center">
+                    <div className="w-1 bg-red-400 rounded-full transition-all duration-75" style={{ height: `${Math.max(20, audioLevel * 0.5)}%` }}></div>
+                    <div className="w-1 bg-red-500 rounded-full transition-all duration-75" style={{ height: `${Math.max(30, audioLevel * 0.8)}%` }}></div>
+                    <div className="w-1 bg-red-400 rounded-full transition-all duration-75" style={{ height: `${Math.max(20, audioLevel * 0.6)}%` }}></div>
+                  </div>
+                )}
                 <span className="text-sm font-medium text-slate-500 animate-pulse hidden sm:inline">聞いています...</span>
               </div>
             )}
