@@ -22,6 +22,7 @@ export default function App() {
   const recognitionRef = useRef(null);
   const isRecordingRef = useRef(false);
   const retryCountRef = useRef(0);
+  const textareaRef = useRef(null); // 自動スクロール用
 
   const audioContextRef = useRef(null);
   const analyserRef = useRef(null);
@@ -59,6 +60,13 @@ export default function App() {
   useEffect(() => {
     isRecordingRef.current = isRecording;
   }, [isRecording]);
+
+  // 録音中、テキストが更新されたら自動で最下部へスクロール
+  useEffect(() => {
+    if (isRecording && activeTab === 'raw' && textareaRef.current) {
+      textareaRef.current.scrollTop = textareaRef.current.scrollHeight;
+    }
+  }, [transcript, interimText, isRecording, activeTab]);
 
   // --- Visualizer ---
   // スマホでのマイク競合を防ぐため、PCのみで動作させる等の制御を行う
@@ -526,6 +534,7 @@ export default function App() {
               </div>
             )}
             <textarea
+              ref={textareaRef}
               value={getCurrentText()}
               onChange={(e) => {
                 const val = e.target.value;
